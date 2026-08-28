@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import shutil
 import hashlib
@@ -6,8 +7,10 @@ import fitz
 import pytesseract
 import streamlit as st
 import time
-import streamlit.components.v1 as components
+import pymupdf
 
+from pptx import Presentation
+from docx import Document
 from PIL import Image
 from dotenv import load_dotenv
 from google import genai
@@ -559,162 +562,395 @@ Return a clean and practical study plan.
 
 
 # =========================
-# MY NOTES / PDF Q&A
+# MY NOTES / MULTI-FORMAT Q&A
 # =========================
 with notes_tab:
 
     st.header("📚 My Notes")
+
     st.caption(
         "Upload your study materials and use them for "
         "AI-powered questions and summaries."
     )
 
     st.write(
-        "Upload a PDF, ask questions from your notes, "
-        "or generate an AI summary."
+        "Upload PDF, PowerPoint, Word, text, or image files "
+        "and ask questions or generate summaries."
     )
 
-    uploaded_pdf = st.file_uploader(
-        "Upload your study notes (PDF)",
-        type=["pdf"],
-        key="notes_pdf_uploader"
+    # =========================
+    # FILE UPLOAD
+    # =========================
+
+    uploaded_file = st.file_uploader(
+        "📂 Upload your study material",
+        type=[
+            "pdf",
+            "pptx",
+            "docx",
+            "txt",
+            "png",
+            "jpg",
+            "jpeg"
+        ],
+        key="notes_file_uploader"
     )
 
-    if uploaded_pdf is not None:
+    if uploaded_file is not None:
 
-        try:
-            # =========================
-            # EXTRACT TEXT + OCR (CACHED)
-            #
-            # This used to run on every rerun of the app (every button
-            # click, every keystroke submit) because it lived directly
-            # in the script body. Wrapping it in @st.cache_data keyed on
-            # the file's bytes means StudyMate only reads/OCRs a given
-            # PDF once, no matter how many times the page reruns
-            # afterwards.
-            # =========================
+        file_name = uploaded_file.name
+        file_extension = file_name.lower().split(".")[-1]
+        file_bytes = uploaded_file.getvalue()
 
-            @st.cache_data(show_spinner=False)
-            def extract_pdf_text(file_bytes: bytes):
+        # =========================
+        # TEXT EXTRACTION FUNCTIONS
+        # =========================
 
-                pdf_document = fitz.open(
-                    stream=file_bytes,
-                    filetype="pdf"
-                )
+        @st.cache_data(show_spinner=False)
+        def extract_pdf_text(file_bytes):
 
-                pdf_text = ""
-                normal_text_pages = 0
-                ocr_pages = 0
-                ocr_warnings = []
+            pdf_document = fitz.open(
+                stream=file_bytes,
+                filetype="pdf"
+            )
 
-                for page_number, page in enumerate(pdf_document):
+            extracted_text = ""
+            normal_text_pages = 0
+            ocr_pages = 0
+            ocr_warnings = []
 
-                    # First try normal PDF text extraction
-                    page_text = page.get_text("text")
+            for page_number, page in enumerate(pdf_document):
 
-                    if page_text and page_text.strip():
+                page_text = page.get_text("text")
 
-                        pdf_text += page_text + "\n"
-                        normal_text_pages += 1
+                if page_text and page_text.strip():
 
-                    else:
+                    extracted_text += page_text + "\n"
+                    normal_text_pages += 1
 
-                        # OCR FOR SCANNED PAGE
-                        try:
+                else:
 
-                            pix = page.get_pixmap(
-                                dpi=200,
-                                colorspace=fitz.csRGB,
-                                alpha=False
-                            )
+                    # OCR FOR SCANNED PDF PAGES
+                    try:
 
-                            img = Image.frombytes(
-                                "RGB",
-                                [pix.width, pix.height],
-                                pix.samples
-                            )
+                        pix = page.get_pixmap(
+                            dpi=200,
+                            colorspace=fitz.csRGB,
+                            alpha=False
+                        )
 
-                            ocr_text = pytesseract.image_to_string(
-                                img,
-                                lang="eng",
-                                config="--psm 6"
-                            )
+                        img = Image.frombytes(
+                            "RGB",
+                            [pix.width, pix.height],
+                            pix.samples
+                        )
 
-                            if ocr_text and ocr_text.strip():
+                        ocr_text = pytesseract.image_to_string(
+                            img,
+                            lang="eng",
+                            config="--psm 6"
+                        )
 
-                                pdf_text += ocr_text + "\n"
-                                ocr_pages += 1
+                        if ocr_text and ocr_text.strip():
 
-                            else:
+                            extracted_text += ocr_text + "\n"
+                            ocr_pages += 1
 
-                                ocr_warnings.append(
-                                    f"⚠️ OCR found no text on page "
-                                    f"{page_number + 1}"
-                                )
-
-                        except Exception as ocr_error:
+                        else:
 
                             ocr_warnings.append(
-                                f"❌ OCR error on page "
-                                f"{page_number + 1}: {ocr_error}"
+                                f"⚠️ OCR found no text on page "
+                                f"{page_number + 1}"
                             )
 
-                return (
-                    pdf_text,
-                    normal_text_pages,
-                    ocr_pages,
-                    len(pdf_document),
-                    ocr_warnings,
+                    except Exception as ocr_error:
+
+                        ocr_warnings.append(
+                            f"❌ OCR error on page "
+                            f"{page_number + 1}: {ocr_error}"
+                        )
+
+            return (
+                extracted_text,
+                normal_text_pages,
+                ocr_pages,
+                len(pdf_document),
+                ocr_warnings
+            )
+
+        @st.cache_data(show_spinner=False)
+        def extract_pptx_text(file_bytes):
+
+            presentation = Presentation(
+                io.BytesIO(file_bytes)
+            )
+
+            extracted_text = ""
+            slide_count = len(presentation.slides)
+
+            for slide_number, slide in enumerate(
+                presentation.slides
+            ):
+
+                extracted_text += (
+                    f"\n--- Slide {slide_number + 1} ---\n"
                 )
 
-            with st.spinner("📚 Reading your PDF (first upload only, cached after)..."):
-                (
-                    pdf_text,
-                    normal_text_pages,
-                    ocr_pages,
-                    total_pages,
-                    ocr_warnings,
-                ) = extract_pdf_text(uploaded_pdf.getvalue())
+                for shape in slide.shapes:
 
-            for warning in ocr_warnings:
-                st.warning(warning)
+                    if hasattr(shape, "text"):
 
-            # =========================
-            # PDF INFORMATION
-            # =========================
+                        if shape.text.strip():
 
-            st.success(
-                f"PDF uploaded successfully! "
-                f"Pages: {total_pages}"
+                            extracted_text += (
+                                shape.text + "\n"
+                            )
+
+            return extracted_text, slide_count
+
+        @st.cache_data(show_spinner=False)
+        def extract_docx_text(file_bytes):
+
+            document = Document(
+                io.BytesIO(file_bytes)
             )
 
-            st.info(
-                f"Normal text pages: {normal_text_pages} | "
-                f"OCR pages: {ocr_pages} | "
-                f"Total extracted characters: {len(pdf_text):,}"
+            extracted_text = ""
+
+            for paragraph in document.paragraphs:
+
+                if paragraph.text.strip():
+
+                    extracted_text += (
+                        paragraph.text + "\n"
+                    )
+
+            return extracted_text
+
+        @st.cache_data(show_spinner=False)
+        def extract_txt_text(file_bytes):
+
+            try:
+
+                return file_bytes.decode(
+                    "utf-8"
+                )
+
+            except UnicodeDecodeError:
+
+                return file_bytes.decode(
+                    "latin-1"
+                )
+
+        @st.cache_data(show_spinner=False)
+        def extract_image_text(file_bytes):
+
+            image = Image.open(
+                io.BytesIO(file_bytes)
             )
+
+            extracted_text = pytesseract.image_to_string(
+                image,
+                lang="eng",
+                config="--psm 6"
+            )
+
+            return extracted_text
+
+        # =========================
+        # EXTRACT TEXT BASED ON TYPE
+        # =========================
+
+        try:
+
+            extracted_text = ""
+            file_info = ""
+
+            # -------------------------
+            # PDF
+            # -------------------------
+
+            if file_extension == "pdf":
+
+                with st.spinner(
+                    "📚 Reading your PDF..."
+                ):
+
+                    (
+                        extracted_text,
+                        normal_text_pages,
+                        ocr_pages,
+                        total_pages,
+                        ocr_warnings
+                    ) = extract_pdf_text(
+                        file_bytes
+                    )
+
+                for warning in ocr_warnings:
+
+                    st.warning(warning)
+
+                file_info = (
+                    f"PDF • {total_pages} pages"
+                )
+
+                st.success(
+                    f"✅ PDF uploaded successfully!"
+                )
+
+                st.info(
+                    f"Normal text pages: "
+                    f"{normal_text_pages} | "
+                    f"OCR pages: {ocr_pages} | "
+                    f"Extracted characters: "
+                    f"{len(extracted_text):,}"
+                )
+
+            # -------------------------
+            # POWERPOINT
+            # -------------------------
+
+            elif file_extension == "pptx":
+
+                with st.spinner(
+                    "📊 Reading your PowerPoint..."
+                ):
+
+                    (
+                        extracted_text,
+                        slide_count
+                    ) = extract_pptx_text(
+                        file_bytes
+                    )
+
+                file_info = (
+                    f"PowerPoint • "
+                    f"{slide_count} slides"
+                )
+
+                st.success(
+                    "✅ PowerPoint uploaded successfully!"
+                )
+
+                st.info(
+                    f"Slides: {slide_count} | "
+                    f"Extracted characters: "
+                    f"{len(extracted_text):,}"
+                )
+
+            # -------------------------
+            # WORD DOCUMENT
+            # -------------------------
+
+            elif file_extension == "docx":
+
+                with st.spinner(
+                    "📝 Reading your Word document..."
+                ):
+
+                    extracted_text = (
+                        extract_docx_text(
+                            file_bytes
+                        )
+                    )
+
+                file_info = "Word Document"
+
+                st.success(
+                    "✅ Word document uploaded successfully!"
+                )
+
+                st.info(
+                    f"Extracted characters: "
+                    f"{len(extracted_text):,}"
+                )
+
+            # -------------------------
+            # TEXT FILE
+            # -------------------------
+
+            elif file_extension == "txt":
+
+                with st.spinner(
+                    "📄 Reading your text file..."
+                ):
+
+                    extracted_text = (
+                        extract_txt_text(
+                            file_bytes
+                        )
+                    )
+
+                file_info = "Text File"
+
+                st.success(
+                    "✅ Text file uploaded successfully!"
+                )
+
+                st.info(
+                    f"Extracted characters: "
+                    f"{len(extracted_text):,}"
+                )
+
+            # -------------------------
+            # IMAGE
+            # -------------------------
+
+            elif file_extension in [
+                "png",
+                "jpg",
+                "jpeg"
+            ]:
+
+                with st.spinner(
+                    "🔍 Reading text from your image..."
+                ):
+
+                    extracted_text = (
+                        extract_image_text(
+                            file_bytes
+                        )
+                    )
+
+                file_info = "Image + OCR"
+
+                st.success(
+                    "✅ Image uploaded successfully!"
+                )
+
+                st.info(
+                    f"OCR extracted characters: "
+                    f"{len(extracted_text):,}"
+                )
 
             # =========================
             # NO TEXT FOUND
             # =========================
 
-            if not pdf_text.strip():
+            if not extracted_text.strip():
 
                 st.error(
-                    "❌ StudyMate could not extract any text from this PDF."
-                )
-
-                st.info(
-                    "The PDF may contain images that OCR cannot recognize."
+                    "❌ StudyMate could not extract text "
+                    "from this file."
                 )
 
             else:
 
                 # =========================
+                # FILE INFORMATION
+                # =========================
+
+                st.caption(
+                    f"📎 {file_name} • {file_info}"
+                )
+
+                # =========================
                 # SUMMARIZE NOTES
                 # =========================
 
-                st.subheader("📝 Summarize Your Notes")
+                st.subheader(
+                    "📝 Summarize Your Notes"
+                )
 
                 if st.button(
                     "📝 Summarize Notes",
@@ -724,41 +960,46 @@ with notes_tab:
                     summary_prompt = f"""
 You are StudyMate AI, a helpful personal AI study assistant.
 
-Summarize the study notes provided below.
+Summarize the study material provided below.
 
 Your summary must contain these sections:
 
 ## 📖 Overview
-Give a short and clear overview of the notes.
+Give a short and clear overview of the material.
 
 ## 🔑 Main Concepts
 List the most important concepts and explain each briefly.
 
 ## 📝 Key Points to Remember
-Give the important points a student should remember for studying or exams.
+Give the important points a student should remember
+for studying or exams.
 
 Important rules:
-- Use ONLY information provided in the notes.
-- Do not add information that is not found in the notes.
+- Use ONLY information provided in the material.
+- Do not add information that is not found in the material.
 - Keep the summary organized and easy to study.
 
-STUDY NOTES:
-{pdf_text}
+STUDY MATERIAL:
+{extracted_text}
 """
 
                     try:
 
                         with st.spinner(
-                            "📝 StudyMate is summarizing your notes..."
+                            "📝 StudyMate is summarizing..."
                         ):
 
-                            response = client.models.generate_content(
-                                model=MODEL_NAME,
-                                contents=summary_prompt,
-                                config=FAST_CONFIG
+                            response = (
+                                client.models.generate_content(
+                                    model=MODEL_NAME,
+                                    contents=summary_prompt,
+                                    config=FAST_CONFIG
+                                )
                             )
 
-                        st.session_state.notes_summary = response.text
+                        st.session_state.notes_summary = (
+                            response.text
+                        )
 
                     except Exception as e:
 
@@ -766,19 +1007,24 @@ STUDY NOTES:
                             f"Error summarizing notes: {e}"
                         )
 
-                # Display summary
+                # =========================
+                # DISPLAY SUMMARY
+                # =========================
+
                 if "notes_summary" in st.session_state:
 
                     st.divider()
 
-                    st.subheader("📝 Your Notes Summary")
+                    st.subheader(
+                        "📝 Your Notes Summary"
+                    )
 
                     st.markdown(
                         st.session_state.notes_summary
                     )
 
                 # =========================
-                # ASK QUESTIONS FROM NOTES
+                # ASK QUESTIONS
                 # =========================
 
                 st.divider()
@@ -787,36 +1033,40 @@ STUDY NOTES:
                     "💬 Ask Questions From Your Notes"
                 )
 
-                # Using a form + submit button (instead of a bare
-                # text_input) means the question is only sent to Gemini
-                # when the student explicitly submits it — not on every
-                # unrelated rerun of this tab, which was silently
-                # re-firing the same API call before.
-                with st.form("notes_question_form"):
+                with st.form(
+                    "notes_question_form"
+                ):
 
                     notes_question = st.text_input(
-                        "Ask a question about your uploaded notes:",
-                        placeholder="Example: What is a semaphore?",
+                        "Ask a question about your uploaded material:",
+                        placeholder=(
+                            "Example: What is a semaphore?"
+                        ),
                         key="notes_question_input"
                     )
 
-                    notes_question_submitted = st.form_submit_button(
-                        "🔍 Ask"
+                    notes_question_submitted = (
+                        st.form_submit_button(
+                            "🔍 Ask"
+                        )
                     )
 
-                if notes_question_submitted and notes_question:
+                if (
+                    notes_question_submitted
+                    and notes_question.strip()
+                ):
 
                     notes_prompt = f"""
 You are StudyMate AI, a helpful personal AI study assistant.
 
-Answer the student's question using ONLY the study notes below.
+Answer the student's question using ONLY the study material below.
 
-If the answer is not found in the notes, clearly say:
+If the answer is not found in the material, clearly say:
 
 "I couldn't find this information in your uploaded notes."
 
-STUDY NOTES:
-{pdf_text}
+STUDY MATERIAL:
+{extracted_text}
 
 STUDENT QUESTION:
 {notes_question}
@@ -827,13 +1077,15 @@ Give a clear and easy-to-understand answer.
                     try:
 
                         with st.spinner(
-                            "📚 Searching your notes..."
+                            "📚 Searching your study material..."
                         ):
 
-                            response = client.models.generate_content(
-                                model=MODEL_NAME,
-                                contents=notes_prompt,
-                                config=FAST_CONFIG
+                            response = (
+                                client.models.generate_content(
+                                    model=MODEL_NAME,
+                                    contents=notes_prompt,
+                                    config=FAST_CONFIG
+                                )
                             )
 
                         st.subheader(
@@ -853,7 +1105,7 @@ Give a clear and easy-to-understand answer.
         except Exception as e:
 
             st.error(
-                f"Error processing PDF: {e}"
+                f"❌ Error processing {file_name}: {e}"
             )
 # =========================
 # AI QUIZ
@@ -1746,9 +1998,12 @@ Use exactly this structure:
                 st.session_state.exam_score = 0
                 st.session_state.exam_time_expired = False
 
-                # Start 10-minute timer
+                # Start timer: ~90 seconds per question, so a 10-question
+                # exam gets 15 minutes. (Previously hardcoded to a flat
+                # 30 seconds regardless of exam length or the "10-minute"
+                # comment here — that was a bug.)
                 st.session_state.exam_start_time = time.time()
-                st.session_state.exam_time_limit = 30
+                st.session_state.exam_time_limit = exam_question_count * 90
 
                 st.rerun()
 
@@ -1771,117 +2026,111 @@ Use exactly this structure:
 
     if st.session_state.get("exam_data"):
 
+        questions = st.session_state.exam_data.get(
+            "questions",
+            []
+        )
+
+        def score_exam(questions):
+            """Shared scoring logic used by both the manual Submit
+            button and the auto-timeout path below, so an exam that
+            times out is graded exactly the same way as one that's
+            submitted manually (unanswered questions just count as
+            wrong)."""
+
+            score = 0
+
+            for i, question_data in enumerate(questions):
+
+                if (
+                    st.session_state.exam_answers.get(i)
+                    == question_data.get("correct_answer")
+                ):
+                    score += 1
+
+            st.session_state.exam_score = score
+            st.session_state.exam_submitted = True
+
         # =========================
-        # CALCULATE TIMER
+        # LIVE TIMER (auto-submits on expiry)
+        #
+        # st.fragment(run_every=1) reruns just this small piece of the
+        # page once a second WITHOUT reloading the browser or losing
+        # session_state (unlike the old approach, which only animated a
+        # countdown in JavaScript and never actually told Streamlit
+        # time was up unless the student clicked something).
+        #
+        # Requires Streamlit >= 1.37. If your deployed version is older,
+        # upgrade streamlit in requirements.txt.
         # =========================
 
-        if st.session_state.get(
-            "exam_start_time"
-        ) is not None:
+        @st.fragment(run_every=1)
+        def exam_timer():
 
-            elapsed_time = (
-                time.time()
-                - st.session_state.exam_start_time
-            )
+            if st.session_state.get("exam_submitted"):
+                return
 
-            remaining_time = (
-                st.session_state.exam_time_limit
-                - elapsed_time
-            )
+            if st.session_state.get("exam_start_time") is not None:
 
-        else:
-
-            remaining_time = (
-                st.session_state.get(
-                    "exam_time_limit",
-                    10 * 60
+                elapsed_time = (
+                    time.time() - st.session_state.exam_start_time
                 )
-            )
 
-        # =========================
-        # TIME EXPIRED
-        # =========================
+                remaining_time = (
+                    st.session_state.exam_time_limit - elapsed_time
+                )
 
-        if remaining_time <= 0:
+            else:
 
-           st.session_state.exam_submitted = True
-           st.session_state.exam_time_expired = True
+                remaining_time = st.session_state.get(
+                    "exam_time_limit", 10 * 60
+                )
 
-           st.warning(
-                   "⏰ Time is up! Your exam has been submitted."
-          )
+            if remaining_time <= 0:
 
-        else:
+                # Time's up — grade whatever was answered so far and
+                # switch the whole page over to the results view.
+                score_exam(questions)
+                st.session_state.exam_time_expired = True
+                st.rerun()
 
-            # =========================
-            # LIVE TIMER
-            # =========================
+            else:
 
-            remaining_seconds = max(
-                0,
-                int(remaining_time)
-            )
+                remaining_seconds = max(0, int(remaining_time))
+                minutes, seconds = divmod(remaining_seconds, 60)
 
-            components.html(
-                f"""
-                <div style="
-                    text-align:center;
-                    font-size:28px;
-                    font-weight:bold;
-                    padding:15px;
-                ">
-                    ⏱️ Time Remaining:
-                    <span id="timer"></span>
-                </div>
+                urgent = remaining_seconds <= 30
+                color = "#DC2626" if urgent else "inherit"
 
-                <script>
-                    let remaining = {remaining_seconds};
+                st.markdown(
+                    f"""
+                    <div style="
+                        text-align:center;
+                        font-size:28px;
+                        font-weight:bold;
+                        padding:15px;
+                        color:{color};
+                    ">
+                        ⏱️ Time Remaining:
+                        {minutes:02d}:{seconds:02d}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
-                    function updateTimer() {{
+        if not st.session_state.get("exam_submitted"):
+            exam_timer()
 
-                        let minutes = Math.floor(
-                            remaining / 60
-                        );
+        elif st.session_state.get("exam_time_expired"):
 
-                        let seconds = remaining % 60;
-
-                        document.getElementById(
-                            "timer"
-                        ).innerHTML =
-                            String(minutes).padStart(2, "0")
-                            + ":"
-                            + String(seconds).padStart(2, "0");
-
-                        if (remaining <= 0) {{
-                            document.getElementById(
-                                "timer"
-                            ).innerHTML = "00:00";
-                            return;
-                        }}
-
-                        remaining--;
-
-                        setTimeout(
-                            updateTimer,
-                            1000
-                        );
-                    }}
-
-                    updateTimer();
-                </script>
-                """,
-                height=80
+            st.warning(
+                "⏰ Time is up! Your exam has been submitted."
             )
 
         st.divider()
 
         st.subheader(
             "📝 Your Practice Exam"
-        )
-
-        questions = st.session_state.exam_data.get(
-            "questions",
-            []
         )
 
         # =========================
@@ -1952,23 +2201,7 @@ Use exactly this structure:
 
                 else:
 
-                    score = 0
-
-                    for i, question_data in enumerate(
-                        questions
-                    ):
-
-                        if (
-                            st.session_state.exam_answers.get(i)
-                            == question_data.get(
-                                "correct_answer"
-                            )
-                        ):
-
-                            score += 1
-
-                    st.session_state.exam_score = score
-                    st.session_state.exam_submitted = True
+                    score_exam(questions)
 
                     st.rerun()
 

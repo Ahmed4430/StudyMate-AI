@@ -110,12 +110,20 @@ st.markdown(
     }
 
     .study-title {
-        font-size: 40px;
-        font-weight: 800;
-        color: #ffffff;
-        margin-bottom: 6px;
-        letter-spacing: -0.5px;
-    }
+        text-align: center;
+        font-size: 42px;
+        font-weight: 700;
+        margin-bottom: 5px;
+
+        background: linear-gradient(
+            90deg,
+            #4f46e5,
+            #7c3aed
+        );
+
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+   }
 
     .study-subtitle {
         font-size: 16px;
@@ -124,11 +132,33 @@ st.markdown(
     }
 
     .feature-card {
-        padding: 22px 24px;
-        border-radius: 16px;
-        border: 1px solid rgba(128,128,128,0.18);
-        background: rgba(127,127,127,0.05);
+        padding: 22px;
+        border-radius: 18px;
+        border: 1px solid rgba(99, 102, 241, 0.25);
         margin-bottom: 18px;
+        background: linear-gradient(
+            135deg,
+            rgba(99, 102, 241, 0.10),
+            rgba(139, 92, 246, 0.06)
+        );
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .feature-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(99, 102, 241, 0.15);
+    }
+
+    .feature-card h2 {
+        margin-bottom: 8px;
+    }
+
+    .feature-card h3 {
+        margin-bottom: 8px;
+    }
+
+    .feature-card p {
+        line-height: 1.6;
     }
 
     div[data-testid="stMetric"] {
@@ -171,18 +201,103 @@ st.markdown(
 
 
 # =========================
-# MAIN TITLE
+# MAIN DASHBOARD
 # =========================
 
 st.markdown(
     """
-    <div class="study-hero">
-        <div class="study-title">🤖 StudyMate AI</div>
-        <div class="study-subtitle">Your Personal AI Study Agent</div>
+    <div class="study-title">
+        🤖 StudyMate AI
+    </div>
+
+    <div class="study-subtitle">
+        Your Personal AI Study Agent
     </div>
     """,
     unsafe_allow_html=True
 )
+
+st.markdown(
+    """
+    <div class="feature-card">
+        <h2>📚 Learn Smarter. Prepare Better.</h2>
+        <p>
+            StudyMate AI helps you learn from your own study materials,
+            understand difficult topics, practice with quizzes,
+            create study plans, and prepare for exams.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown("### 🚀 Your AI Study Toolkit")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown(
+        """
+        <div class="feature-card">
+            <h3>🤖 AI Tutor</h3>
+            <p>
+                Ask questions and get clear,
+                personalized explanations.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with col2:
+    st.markdown(
+        """
+        <div class="feature-card">
+            <h3>📚 Smart Notes</h3>
+            <p>
+                Upload PDF, PPTX, DOCX,
+                TXT, or images and learn from them.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with col3:
+    st.markdown(
+        """
+        <div class="feature-card">
+            <h3>🎯 Exam Preparation</h3>
+            <p>
+                Practice quizzes and exams
+                with AI-generated questions.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown("")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        "🤖 AI Tutor",
+        "Ready"
+    )
+
+with col2:
+    st.metric(
+        "📚 Smart Notes",
+        "Multi-Format"
+    )
+
+with col3:
+    st.metric(
+        "🎯 Exam Mode",
+        "Ready"
+    )
 
 
 # =========================
